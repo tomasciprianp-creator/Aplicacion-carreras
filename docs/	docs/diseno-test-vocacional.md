@@ -14,19 +14,21 @@ Va primero porque filtra el dataset de universidades ANTES de que exista cualqui
 
 Con esto se filtra `universidades` contra el presupuesto: las de costo fijo se comparan directo, las de costo variable por estrato se resuelven con el estrato del estudiante, y las de Matrícula Cero pasan automáticamente si el estudiante está en estrato 1-3 o Sisbén A/B/C.
 
-## Módulo 2 — 18 preguntas Likert, 6 dimensiones (determinístico)
+## Módulo 2 — 42 preguntas Likert, 6 dimensiones (determinístico)
 
-Dimensiones: **Analítico, Técnico, Social, Creativo, Organizacional, Investigativo** — 3 preguntas por dimensión (3 × 6 = 18).
+Dimensiones: **Analítico, Técnico, Social, Creativo, Organizacional, Investigativo** — 7 preguntas por dimensión (7 × 6 = 42).
 
-El perfil se calcula con una fórmula fija (promedio normalizado por dimensión, escala 0-100), sin IA. Las 2-3 dimensiones más altas del estudiante se cruzan con la **tabla de mapeo dimensión→área** (determinística) para obtener 2-3 áreas de carrera candidatas. La IA nunca decide esto — solo interpreta después, en el Módulo 3.
+El perfil se calcula con una fórmula fija: se suma la puntuación (1-5) de las 7 preguntas de cada dimensión (suma entera posible: 7 a 35), y esa suma se normaliza a escala 0-100 solo para mostrarla — la **decisión de "casi empate" se toma siempre sobre la suma entera**, nunca sobre el puntaje normalizado con decimales (ver nota de precisión más abajo). Las 2-3 dimensiones más altas del estudiante se cruzan con la **tabla de mapeo dimensión→área** (determinística) para obtener 2-3 áreas de carrera candidatas. La IA nunca decide esto — solo interpreta después, en el Módulo 3.
 
-### Umbral de empate / perfil disperso
+### Umbral de "casi empate" (revisado)
 
-Fijado en **8.33 puntos** — no es un valor arbitrario, se deriva de la granularidad real de la grilla de puntuación: 3 preguntas Likert por dimensión, movimiento mínimo por pregunta = 8.33 puntos normalizados. Si la diferencia entre la 2ª y 3ª dimensión más alta es menor a ese umbral, se toman 3 dimensiones en vez de 2 (`es_perfil_disperso = true`), y esto se comunica honestamente al estudiante — no se fuerza una narrativa de claridad que los datos no respaldan.
+**Diseño original (descartado):** 3 preguntas/dimensión con umbral fijo de 8.33 puntos normalizados. Al construir las pruebas automatizadas del motor determinístico se descubrió un problema de precisión: con 3 preguntas por dimensión, la única diferencia posible entre dos puntajes normalizados es un múltiplo exacto de 8.333... (nunca un valor entre 0 y 8.333). Como el umbral (8.33) era menor que ese paso mínimo, la regla en la práctica **solo se activaba con un empate exacto** — nunca con una diferencia real de "casi empate" de una sola respuesta.
+
+**Diseño actual:** 7 preguntas/dimensión (42 total), y el umbral se define en **pasos de suma entera**, no en puntaje decimal: si la diferencia entre la suma de la 2ª y 3ª dimensión es de **hasta 2 preguntas de diferencia** (`diferencia_suma <= 2`), se activa `es_perfil_disperso = true` y se toman 3 dimensiones en vez de 2. Comparar enteros elimina por completo el riesgo de error de precisión que tenía el diseño anterior.
 
 ### Regla para perfiles de 3 dimensiones
 
-Cuando el perfil tiene 3 dimensiones (por el umbral de empate), se consultan las 3 combinaciones pareadas posibles en la tabla de mapeo y se hace la **unión sin duplicados** de las áreas resultantes de cada par.
+Cuando el perfil tiene 3 dimensiones (por el umbral de "casi empate"), se consultan las 3 combinaciones pareadas posibles en la tabla de mapeo y se hace la **unión sin duplicados** de las áreas resultantes de cada par.
 
 ## Tabla de mapeo dimensión → área de carrera
 
@@ -44,7 +46,7 @@ Regla explícita: si la IA no puede conectar una respuesta abierta con ninguna d
 
 ```
 Módulo 1 (presupuesto) ──► filtra universidades (determinístico, sin IA)
-Módulo 2 (18 Likert)   ──► perfil de dimensiones ──► tabla de mapeo ──► áreas candidatas (determinístico, sin IA)
+Módulo 2 (42 Likert)   ──► perfil de dimensiones ──► tabla de mapeo ──► áreas candidatas (determinístico, sin IA)
 Módulo 3 (abiertas)    ──► texto crudo del estudiante
                               │
                               ▼
@@ -61,4 +63,4 @@ Módulo 3 (abiertas)    ──► texto crudo del estudiante
 
 ## Consideración de UX pendiente de decidir en el frontend
 
-El test tiene 3 módulos y puede tomar 8-10 minutos — vale la pena guardar progreso parcial (por sesión) por si el estudiante lo abandona a mitad de camino, en vez de perder todo si cierra la pestaña.
+Con 42 preguntas Likert (subido de 18) más presupuesto y preguntas abiertas, el test probablemente tome 10-15 minutos — vale la pena guardar progreso parcial (por sesión) por si el estudiante lo abandona a mitad de camino, en vez de perder todo si cierra la pestaña. Esto se vuelve más importante ahora que el test es más largo, no menos.
