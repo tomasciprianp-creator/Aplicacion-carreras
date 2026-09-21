@@ -1,0 +1,432 @@
+/* ---------------------------------------------------------------------
+   Tokens
+   Paleta: papel gris-verdoso + tinta azul-noche + acento mostaza (sello de
+   decisión / oficialidad). Deliberadamente distinta del crema-terracota
+   genérico de IA: esto es un instrumento de decisión, no una landing page.
+--------------------------------------------------------------------- */
+
+:root {
+  --color-bg: #EEF0E8;
+  --color-surface: #F8F8F3;
+  --color-ink: #1E2636;
+  --color-ink-soft: #4C5567;
+  --color-accent: #B68A1E;
+  --color-accent-ink: #5A4308;
+  --color-accent-soft: #E9D9A6;
+  --color-line: #C7C4B2;
+  --color-error: #A6402A;
+  --color-error-soft: #F2DAD2;
+
+  --font-display: "Newsreader", Georgia, serif;
+  --font-body: "Public Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --radius: 3px;
+  --max-w: 640px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  line-height: 1.5;
+}
+
+body {
+  min-height: 100vh;
+}
+
+/* ---------------------------------------------------------------------
+   Header + rastreador de capítulos
+--------------------------------------------------------------------- */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+}
+
+.app-header__mark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--color-ink);
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.app-header__title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--color-ink-soft);
+}
+
+.chapter-tracker {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.chapter-tracker__tick {
+  width: 22px;
+  height: 4px;
+  background: var(--color-line);
+  border-radius: 2px;
+  transition: background 0.2s ease;
+}
+
+.chapter-tracker__tick[data-state="done"] { background: var(--color-accent); }
+.chapter-tracker__tick[data-state="current"] { background: var(--color-ink); }
+
+/* ---------------------------------------------------------------------
+   Estructura general
+--------------------------------------------------------------------- */
+
+.app-shell {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 56px 24px 96px;
+}
+
+.screen--center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  text-align: center;
+}
+
+.eyebrow {
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent-ink);
+  margin: 0 0 10px;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 34px;
+  line-height: 1.2;
+  margin: 0 0 20px;
+  max-width: 20ch;
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 26px;
+  line-height: 1.25;
+  margin: 0 0 12px;
+}
+
+.lede {
+  font-size: 16px;
+  color: var(--color-ink-soft);
+  max-width: 58ch;
+  margin: 0 0 36px;
+}
+
+/* ---------------------------------------------------------------------
+   Formulario de presupuesto
+--------------------------------------------------------------------- */
+
+.form-block {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  font-family: var(--font-body);
+  font-size: 16px;
+  padding: 11px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.field input:focus,
+.field select:focus {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 1px;
+}
+
+.field-hint {
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------
+   Botones
+--------------------------------------------------------------------- */
+
+.btn-primary,
+.btn-secondary {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 13px 22px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: var(--color-ink);
+  color: var(--color-surface);
+  align-self: flex-start;
+}
+
+.btn-primary:hover { background: #131A27; }
+
+.btn-primary:disabled {
+  background: var(--color-line);
+  color: var(--color-ink-soft);
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--color-ink);
+  border-color: var(--color-line);
+}
+
+.btn-secondary:hover { border-color: var(--color-ink); }
+
+.nav-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 36px;
+}
+
+/* ---------------------------------------------------------------------
+   Preguntas Likert — escala como tira de casillas, no radios nativos
+--------------------------------------------------------------------- */
+
+.likert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.likert-item__prompt {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+.likert-scale {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.likert-option {
+  position: relative;
+}
+
+.likert-option input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.likert-option span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.likert-option input:checked + span {
+  border-color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-surface);
+}
+
+.likert-option input:focus-visible + span {
+  outline: 2px solid var(--color-accent-ink);
+  outline-offset: 2px;
+}
+
+.likert-scale-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--color-ink-soft);
+  margin-top: 6px;
+}
+
+/* ---------------------------------------------------------------------
+   Preguntas abiertas
+--------------------------------------------------------------------- */
+
+.abiertas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.abierta-item label {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+
+.abierta-item textarea {
+  width: 100%;
+  min-height: 100px;
+  font-family: var(--font-body);
+  font-size: 15px;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  resize: vertical;
+}
+
+.abierta-item textarea:focus {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------
+   Cargando
+--------------------------------------------------------------------- */
+
+.loader {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader { animation-duration: 2.4s; }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loader-text {
+  color: var(--color-ink-soft);
+  font-size: 15px;
+}
+
+/* ---------------------------------------------------------------------
+   Resultado
+--------------------------------------------------------------------- */
+
+.resultado-bloque {
+  margin-bottom: 32px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.resultado-bloque:last-child {
+  border-bottom: none;
+}
+
+.resultado-bloque h3 {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+
+.universidad-card {
+  padding: 14px 0;
+  border-top: 1px solid var(--color-line);
+}
+
+.universidad-card:first-child { border-top: none; }
+
+.universidad-card__nombre {
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.universidad-card__meta {
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------
+   Error
+--------------------------------------------------------------------- */
+
+[data-screen="error"] .lede {
+  color: var(--color-error);
+  background: var(--color-error-soft);
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  max-width: none;
+}
+
+/* ---------------------------------------------------------------------
+   Responsive
+--------------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  h1 { font-size: 27px; }
+  h2 { font-size: 22px; }
+  .likert-scale { gap: 4px; }
+  .likert-option span { height: 40px; font-size: 12px; }
+  .chapter-tracker { display: none; }
+}
