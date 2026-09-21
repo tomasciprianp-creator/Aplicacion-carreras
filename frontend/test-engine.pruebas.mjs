@@ -1,290 +1,431 @@
-// test-engine.js
+// test-engine.pruebas.mjs
 //
-// Motor determinístico del test vocacional. Todo lo que hay en este archivo
-// corre en el navegador, SIN IA — el cálculo del perfil, el mapeo a áreas de
-// carrera, y el filtro de universidades por presupuesto son 100%
-// reproducibles y auditables. La única llamada con IA pasa por la Edge
-// Function `interpretar-resultado`, al final del flujo (ver generarResultado).
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// ---------------------------------------------------------------------------
-// Configuración — reemplazar con los valores reales del proyecto.
-// La anon key es pública por diseño (Supabase la protege con RLS, no la
-// oculta), así que es seguro que viva en el cliente.
-// ---------------------------------------------------------------------------
-
-const SUPABASE_URL = "https://TU-PROYECTO.supabase.co";
-const SUPABASE_ANON_KEY = "TU-ANON-KEY";
-const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/interpretar-resultado`;
-
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// ---------------------------------------------------------------------------
-// Carga de preguntas (catálogo — se usa para renderizar el test)
-// ---------------------------------------------------------------------------
-
-export async function cargarPreguntasLikert() {
-  const { data, error } = await supabase
-    .from("preguntas_likert")
-    .select("id, texto, orden, dimension_id, dimensiones(nombre)")
-    .order("orden");
-  if (error) throw new Error(`Error cargando preguntas Likert: ${error.message}`);
-  return data;
-}
-
-export async function cargarPreguntasAbiertas() {
-  const { data, error } = await supabase
-    .from("preguntas_abiertas")
-    .select("id, texto, orden")
-    .order("orden");
-  if (error) throw new Error(`Error cargando preguntas abiertas: ${error.message}`);
-  return data;
-}
-
-// ---------------------------------------------------------------------------
-// Cálculo del perfil de dimensiones — determinístico, fórmula fija.
+// Pruebas automatizadas para test-engine.js.
 //
-// 7 preguntas Likert (1-5) por dimensión → suma entera posible: 7 a 35.
-// "Casi empate" se define en PASOS DE SUMA ENTERA, no en puntaje normalizado
-// con decimales — esto evita el problema de precisión de punto flotante que
-// tenía la versión anterior (umbral fijo de 8.33 contra un paso real de
-// 8.3333...). Comparar enteros es exacto: no hay ambigüedad posible.
+// NOTA SOBRE CÓMO CORRER ESTO: test-engine.js importa @supabase/supabase-js
+// directamente desde esm.sh (import de red, pensado para navegador, sin
+// bundler). Node ya NO soporta imports por URL — la bandera
+// --experimental-network-imports que existía en versiones viejas fue
+// removida. Verificado en Node v22.
 //
-// respuestasLikert: array de { pregunta_id, valor (1-5) }
-// preguntas: el array devuelto por cargarPreguntasLikert (para saber a qué
-// dimensión pertenece cada pregunta)
-// ---------------------------------------------------------------------------
+// Para correr estas pruebas con `node`, hay que darle a Node una copia local
+// del paquete:
+//
+//   npm init -y
+//   npm install @supabase/supabase-js
+//
+// y cambiar SOLO en una copia de prueba (o vía un alias/import-map) la línea
+// de test-engine.js de:
+//   import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// a:
+//   import { createClient } from "@supabase/supabase-js";
+//
+// El archivo de producción (el que corre en el navegador) puede quedarse con
+// el import por URL — ese sí funciona nativo en cualquier navegador moderno,
+// sin build step. Pendiente decidir si vale la pena mantener las dos
+// versiones del import o migrar todo a npm + un bundler simple (Vite).
+//
+// Cobertura:
+// 1. calcularPerfilDimensiones — función pura, sin red, probada exhaustivamente.
+// 2. filtrarUniversidadesPorPresupuesto y obtenerAreasCandidatas — se prueban
+//    con un mock de `supabase` (se sobreescriben sus métodos antes de llamar),
+//    para no depender de una base de datos real ni de credenciales.
 
-const PREGUNTAS_POR_DIMENSION = 7;
-const MIN_SUMA = PREGUNTAS_POR_DIMENSION;      // 7
-const MAX_SUMA = PREGUNTAS_POR_DIMENSION * 5;  // 35
-const PASOS_CASI_EMPATE = 2; // "hasta 2 pasos de diferencia cuentan como casi empate"
+import test from "node:test";
+import assert from "node:assert/strict";
+import { supabase, calcularPerfilDimensiones, filtrarUniversidadesPorPresupuesto, obtenerAreasCandidatas } from "./test-engine.js";
 
-export function calcularPerfilDimensiones(respuestasLikert, preguntas) {
-  // Agrupar valores por dimensión.
-  const valoresPorDimension = new Map(); // nombre dimensión -> [valores 1-5]
+// ===========================================================================
+// 1. calcularPerfilDimensiones
+// ===========================================================================
 
-  for (const respuesta of respuestasLikert) {
-    const pregunta = preguntas.find((p) => p.id === respuesta.pregunta_id);
-    if (!pregunta) continue;
-    const nombreDimension = pregunta.dimensiones.nombre;
-    if (!valoresPorDimension.has(nombreDimension)) valoresPorDimension.set(nombreDimension, []);
-    valoresPorDimension.get(nombreDimension).push(respuesta.valor);
+// Helper: construye un set de respuestas Likert + catálogo de preguntas a
+// partir de un mapa { dimension: [valores] }.
+function construirCaso(valoresPorDimension) {
+  const preguntas = [];
+  const respuestas = [];
+  let id = 1;
+
+  for (const [dimension, valores] of Object.entries(valoresPorDimension)) {
+    for (const valor of valores) {
+      preguntas.push({ id, dimensiones: { nombre: dimension } });
+      respuestas.push({ pregunta_id: id, valor });
+      id++;
+    }
   }
 
-  // Cada dimensión guarda su suma ENTERA (7-35) además del puntaje
-  // normalizado 0-100 (el normalizado es solo para mostrar/ordenar; la
-  // decisión de "casi empate" se toma siempre sobre la suma entera).
-  const puntajes = []; // [{ dimension, suma, puntaje }]
-  for (const [dimension, valores] of valoresPorDimension.entries()) {
-    const suma = valores.reduce((acc, v) => acc + v, 0);
-    const puntaje = ((suma - MIN_SUMA) / (MAX_SUMA - MIN_SUMA)) * 100;
-    puntajes.push({ dimension, suma, puntaje });
-  }
+  return { preguntas, respuestas };
+}
 
-  puntajes.sort((a, b) => b.suma - a.suma);
+test("perfil claro (top-2) cuando la diferencia 2da vs 3ra suma > 2", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),      // suma 35
+    Social: Array(7).fill(4),         // suma 28
+    Creativo: Array(7).fill(2),       // suma 14 -> diferencia 28-14=14, > 2
+    Tecnico: Array(7).fill(1),        // suma 7
+  });
 
-  // "Casi empate" = la diferencia de SUMA ENTERA entre la 2ª y 3ª dimensión
-  // es de a lo sumo PASOS_CASI_EMPATE (2) preguntas de diferencia.
-  const diferenciaSumas2vs3 = puntajes.length >= 3 ? puntajes[1].suma - puntajes[2].suma : Infinity;
-  const esPerfilDisperso = diferenciaSumas2vs3 <= PASOS_CASI_EMPATE;
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
 
-  const dimensionesElegidas = esPerfilDisperso
-    ? puntajes.slice(0, 3).map((p) => p.dimension)
-    : puntajes.slice(0, 2).map((p) => p.dimension);
+  assert.equal(resultado.es_perfil_disperso, false);
+  assert.deepEqual(resultado.perfil_dimensiones, ["Analitico", "Social"]);
+});
 
-  return {
-    perfil_dimensiones: dimensionesElegidas,
-    es_perfil_disperso: esPerfilDisperso,
-    puntajes, // se guarda completo (suma + puntaje normalizado) por si se quiere mostrar un detalle visual
+test("perfil disperso (top-3) cuando la diferencia 2da vs 3ra suma es <= 2", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),      // suma 35
+    Social: Array(7).fill(4),         // suma 28
+    Creativo: [4, 4, 4, 4, 4, 4, 3],  // suma 27 -> diferencia 28-27=1, <= 2
+    Tecnico: Array(7).fill(1),        // suma 7
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  assert.equal(resultado.es_perfil_disperso, true);
+  assert.deepEqual(resultado.perfil_dimensiones, ["Analitico", "Social", "Creativo"]);
+});
+
+test("empate exacto entre 2da y 3ra cuenta como perfil disperso (diferencia = 0)", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),  // 35
+    Social: Array(7).fill(3),     // 21
+    Creativo: Array(7).fill(3),   // 21 -> empate exacto con Social
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  assert.equal(resultado.es_perfil_disperso, true);
+  assert.equal(resultado.perfil_dimensiones.length, 3);
+});
+
+test("diferencia de exactamente 2 pasos todavía cuenta como casi empate (límite inclusivo)", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),           // 35
+    Social: [4, 4, 4, 4, 4, 4, 4],          // 28
+    Creativo: [4, 4, 4, 4, 4, 4, 2],        // 26 -> diferencia 28-26=2, límite exacto
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  assert.equal(resultado.es_perfil_disperso, true);
+});
+
+test("diferencia de 3 pasos ya NO cuenta como casi empate", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),           // 35
+    Social: [4, 4, 4, 4, 4, 4, 4],          // 28
+    Creativo: [4, 4, 4, 4, 4, 4, 1],        // 25 -> diferencia 28-25=3
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  assert.equal(resultado.es_perfil_disperso, false);
+  assert.deepEqual(resultado.perfil_dimensiones, ["Analitico", "Social"]);
+});
+
+test("con menos de 3 dimensiones respondidas, nunca es perfil disperso", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),
+    Social: Array(7).fill(5),
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  assert.equal(resultado.es_perfil_disperso, false);
+  assert.deepEqual(resultado.perfil_dimensiones, ["Analitico", "Social"]);
+});
+
+test("puntaje normalizado: suma mínima (7) da 0, suma máxima (35) da 100", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),  // suma 35 -> puntaje 100
+    Social: Array(7).fill(1),     // suma 7  -> puntaje 0
+    Creativo: Array(7).fill(3),   // suma 21 -> puntaje 50
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+  const porNombre = Object.fromEntries(resultado.puntajes.map((p) => [p.dimension, p.puntaje]));
+
+  assert.equal(porNombre.Analitico, 100);
+  assert.equal(porNombre.Social, 0);
+  assert.equal(porNombre.Creativo, 50);
+});
+
+test("ignora respuestas cuya pregunta_id no existe en el catálogo", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Analitico: Array(7).fill(5),
+    Social: Array(7).fill(3),
+    Creativo: Array(7).fill(3),
+  });
+
+  // Respuesta "huérfana": no corresponde a ninguna pregunta del catálogo.
+  respuestas.push({ pregunta_id: 9999, valor: 5 });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+
+  // No debe crear una dimensión fantasma ni reventar.
+  const dimensionesEnPuntajes = resultado.puntajes.map((p) => p.dimension);
+  assert.equal(dimensionesEnPuntajes.length, 3);
+});
+
+test("las dimensiones se ordenan de mayor a menor suma", () => {
+  const { preguntas, respuestas } = construirCaso({
+    Bajo: Array(7).fill(1),
+    Alto: Array(7).fill(5),
+    Medio: Array(7).fill(3),
+  });
+
+  const resultado = calcularPerfilDimensiones(respuestas, preguntas);
+  const orden = resultado.puntajes.map((p) => p.dimension);
+
+  assert.deepEqual(orden, ["Alto", "Medio", "Bajo"]);
+});
+
+// ===========================================================================
+// 2. filtrarUniversidadesPorPresupuesto (con mock de supabase)
+// ===========================================================================
+
+function mockSupabaseFrom(tabla, filas) {
+  supabase.from = (nombreTabla) => {
+    assert.equal(nombreTabla, tabla);
+    return {
+      select: () => Promise.resolve({ data: filas, error: null }),
+    };
   };
 }
 
-// ---------------------------------------------------------------------------
-// Áreas de carrera candidatas — consulta la tabla de mapeo en Supabase.
-//
-// Regla: para 2 dimensiones, un solo par. Para 3 dimensiones (perfil
-// disperso), se consultan las 3 combinaciones pareadas posibles y se hace la
-// unión sin duplicados.
-// ---------------------------------------------------------------------------
-
-function combinacionesDePares(dimensiones) {
-  const pares = [];
-  for (let i = 0; i < dimensiones.length; i++) {
-    for (let j = i + 1; j < dimensiones.length; j++) {
-      pares.push([dimensiones[i], dimensiones[j]]);
-    }
-  }
-  return pares;
-}
-
-export async function obtenerAreasCandidatas(perfilDimensiones) {
-  const { data: todasLasDimensiones, error: errorDim } = await supabase
-    .from("dimensiones")
-    .select("id, nombre");
-  if (errorDim) throw new Error(`Error cargando dimensiones: ${errorDim.message}`);
-
-  const idPorNombre = new Map(todasLasDimensiones.map((d) => [d.nombre, d.id]));
-  const pares = combinacionesDePares(perfilDimensiones);
-
-  const areasEncontradas = new Set();
-
-  for (const [dim1, dim2] of pares) {
-    const id1 = idPorNombre.get(dim1);
-    const id2 = idPorNombre.get(dim2);
-
-    // La tabla de mapeo no garantiza un orden fijo de columnas para el par,
-    // así que se consulta en ambos sentidos.
-    const { data, error } = await supabase
-      .from("mapeo_dimensiones_areas")
-      .select("areas_carrera(nombre)")
-      .or(
-        `and(dimension_1_id.eq.${id1},dimension_2_id.eq.${id2}),and(dimension_1_id.eq.${id2},dimension_2_id.eq.${id1})`,
-      );
-
-    if (error) throw new Error(`Error consultando mapeo de áreas: ${error.message}`);
-
-    for (const fila of data ?? []) {
-      areasEncontradas.add(fila.areas_carrera.nombre);
-    }
-  }
-
-  return [...areasEncontradas];
-}
-
-// ---------------------------------------------------------------------------
-// Filtro de universidades por presupuesto — determinístico, corre antes que
-// cualquier interpretación de IA.
-// ---------------------------------------------------------------------------
-
-export async function filtrarUniversidadesPorPresupuesto({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }) {
-  const { data: universidades, error } = await supabase
-    .from("universidades")
-    .select("id, nombre, ciudad, tipo_costo, costo_fijo, ayuda_financiera, fuente, costos_por_estrato(estrato, costo)");
-
-  if (error) throw new Error(`Error cargando universidades: ${error.message}`);
-
-  const gruposSisbenElegibles = ["A", "B", "C"];
-
-  return (universidades ?? [])
-    .filter((u) => !ciudadPreferida || u.ciudad === ciudadPreferida)
-    .filter((u) => {
-      if (u.tipo_costo === "matricula_cero") {
-        // Matrícula Cero aplica a estrato 1-3 o Sisbén A/B/C.
-        const califica =
-          (estrato != null && estrato <= 3) ||
-          (sisbenGrupo != null && gruposSisbenElegibles.includes(sisbenGrupo));
-        return califica;
-      }
-
-      if (u.tipo_costo === "fijo") {
-        return u.costo_fijo <= presupuestoMax;
-      }
-
-      // variable_estrato: si no se conoce el estrato del estudiante, no se
-      // puede afirmar que está dentro de presupuesto — se excluye por
-      // seguridad en vez de asumir el valor más bajo.
-      if (estrato == null) return false;
-      const filaEstrato = (u.costos_por_estrato ?? []).find((c) => c.estrato === estrato);
-      if (!filaEstrato) return false;
-      return filaEstrato.costo <= presupuestoMax;
-    })
-    .map((u) => u.id); // el frontend solo necesita los ids: la Edge Function
-                        // vuelve a consultar el detalle completo por seguridad
-                        // (ver interpretar-resultado/index.ts)
-}
-
-// ---------------------------------------------------------------------------
-// Persistencia de la sesión y las respuestas del estudiante
-// ---------------------------------------------------------------------------
-
-export async function crearSesion({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }) {
-  const { data, error } = await supabase
-    .from("sesiones_test")
-    .insert({
-      presupuesto_semestre_max: presupuestoMax,
-      estrato: estrato ?? null,
-      sisben_grupo: sisbenGrupo ?? null,
-      ciudad_preferida: ciudadPreferida ?? "Bogotá",
-    })
-    .select("id")
-    .single();
-
-  if (error) throw new Error(`Error creando sesión: ${error.message}`);
-  return data.id;
-}
-
-export async function guardarRespuestasLikert(sesionId, respuestas) {
-  const filas = respuestas.map((r) => ({ sesion_id: sesionId, pregunta_id: r.pregunta_id, valor: r.valor }));
-  const { error } = await supabase.from("respuestas_likert").insert(filas);
-  if (error) throw new Error(`Error guardando respuestas Likert: ${error.message}`);
-}
-
-export async function guardarRespuestasAbiertas(sesionId, respuestas) {
-  const filas = respuestas.map((r) => ({ sesion_id: sesionId, pregunta_id: r.pregunta_id, respuesta: r.respuesta }));
-  const { error } = await supabase.from("respuestas_abiertas").insert(filas);
-  if (error) throw new Error(`Error guardando respuestas abiertas: ${error.message}`);
-}
-
-// ---------------------------------------------------------------------------
-// Cierre del flujo: llama a la Edge Function (única parte con IA).
-// ---------------------------------------------------------------------------
-
-export async function generarResultado({ sesionId, universidadIds, perfilDimensiones, esPerfilDisperso, areasCandidatas, email }) {
-  const response = await fetch(EDGE_FUNCTION_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      // La Edge Function corre con service role internamente, pero el request
-      // HTTP en sí sigue necesitando la anon key para pasar el gateway de Supabase.
-      authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify({
-      accion: "generar_resultado",
-      sesion_id: sesionId,
-      universidad_ids: universidadIds,
-      perfil_dimensiones: perfilDimensiones,
-      es_perfil_disperso: esPerfilDisperso,
-      areas_candidatas: areasCandidatas,
-      email: email || undefined,
-    }),
-  });
-
-  if (!response.ok) throw new Error(`Error generando resultado: ${response.status}`);
-  return response.json();
-}
-
-// ---------------------------------------------------------------------------
-// Orquestador de alto nivel — junta todos los pasos anteriores.
-// Esto es lo que llamaría la pantalla final del test, con todas las
-// respuestas ya recolectadas por la interfaz.
-// ---------------------------------------------------------------------------
-
-export async function completarTest({
-  presupuestoMax, estrato, sisbenGrupo, ciudadPreferida,
-  respuestasLikert, preguntasLikert, respuestasAbiertas,
-  email,
-}) {
-  const sesionId = await crearSesion({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida });
-
-  await Promise.all([
-    guardarRespuestasLikert(sesionId, respuestasLikert),
-    guardarRespuestasAbiertas(sesionId, respuestasAbiertas),
+test("universidad tipo 'fijo' dentro de presupuesto pasa el filtro", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "fijo", costo_fijo: 3000000, costos_por_estrato: [] },
   ]);
 
-  const { perfil_dimensiones, es_perfil_disperso } = calcularPerfilDimensiones(respuestasLikert, preguntasLikert);
-  const areasCandidatas = await obtenerAreasCandidatas(perfil_dimensiones);
-  const universidadIds = await filtrarUniversidadesPorPresupuesto({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida });
-
-  const resultado = await generarResultado({
-    sesionId,
-    universidadIds,
-    perfilDimensiones: perfil_dimensiones,
-    esPerfilDisperso: es_perfil_disperso,
-    areasCandidatas,
-    email,
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 3000000,
+    estrato: 3,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
   });
 
-  return { sesionId, resultado };
-}
+  assert.deepEqual(resultado, [1]);
+});
+
+test("universidad tipo 'fijo' fuera de presupuesto NO pasa el filtro", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "fijo", costo_fijo: 5000000, costos_por_estrato: [] },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 3000000,
+    estrato: 3,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+
+  assert.deepEqual(resultado, []);
+});
+
+test("matricula_cero califica con estrato <= 3, sin importar presupuesto", () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "matricula_cero", costos_por_estrato: [] },
+  ]);
+
+  return filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 0,
+    estrato: 2,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  }).then((resultado) => assert.deepEqual(resultado, [1]));
+});
+
+test("matricula_cero califica con Sisbén A/B/C aunque el estrato sea alto", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "matricula_cero", costos_por_estrato: [] },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 0,
+    estrato: 6,
+    sisbenGrupo: "B",
+    ciudadPreferida: null,
+  });
+
+  assert.deepEqual(resultado, [1]);
+});
+
+test("matricula_cero NO califica sin estrato bajo ni Sisbén elegible", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "matricula_cero", costos_por_estrato: [] },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 5000000,
+    estrato: 6,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+
+  assert.deepEqual(resultado, []);
+});
+
+test("variable_estrato SIN estrato conocido se excluye por seguridad", async () => {
+  mockSupabaseFrom("universidades", [
+    {
+      id: 1,
+      ciudad: "Bogotá",
+      tipo_costo: "variable_estrato",
+      costos_por_estrato: [{ estrato: 3, costo: 1000000 }],
+    },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 5000000,
+    estrato: null,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+
+  assert.deepEqual(resultado, []);
+});
+
+test("variable_estrato CON estrato conocido usa el costo de esa fila", async () => {
+  mockSupabaseFrom("universidades", [
+    {
+      id: 1,
+      ciudad: "Bogotá",
+      tipo_costo: "variable_estrato",
+      costos_por_estrato: [
+        { estrato: 2, costo: 500000 },
+        { estrato: 3, costo: 4000000 },
+      ],
+    },
+  ]);
+
+  const dentro = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 1000000,
+    estrato: 2,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+  assert.deepEqual(dentro, [1]);
+
+  const fuera = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 1000000,
+    estrato: 3,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+  assert.deepEqual(fuera, []);
+});
+
+test("filtra por ciudadPreferida cuando se especifica", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "fijo", costo_fijo: 1000000, costos_por_estrato: [] },
+    { id: 2, ciudad: "Medellín", tipo_costo: "fijo", costo_fijo: 1000000, costos_por_estrato: [] },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 5000000,
+    estrato: 3,
+    sisbenGrupo: null,
+    ciudadPreferida: "Bogotá",
+  });
+
+  assert.deepEqual(resultado, [1]);
+});
+
+test("sin ciudadPreferida no filtra por ciudad", async () => {
+  mockSupabaseFrom("universidades", [
+    { id: 1, ciudad: "Bogotá", tipo_costo: "fijo", costo_fijo: 1000000, costos_por_estrato: [] },
+    { id: 2, ciudad: "Medellín", tipo_costo: "fijo", costo_fijo: 1000000, costos_por_estrato: [] },
+  ]);
+
+  const resultado = await filtrarUniversidadesPorPresupuesto({
+    presupuestoMax: 5000000,
+    estrato: 3,
+    sisbenGrupo: null,
+    ciudadPreferida: null,
+  });
+
+  assert.deepEqual(resultado.sort(), [1, 2]);
+});
+
+// ===========================================================================
+// 3. obtenerAreasCandidatas (con mock de supabase)
+// ===========================================================================
+
+test("perfil de 2 dimensiones consulta un solo par", async () => {
+  let llamadasAMapeo = 0;
+
+  supabase.from = (tabla) => {
+    if (tabla === "dimensiones") {
+      return {
+        select: () =>
+          Promise.resolve({
+            data: [
+              { id: 1, nombre: "Analitico" },
+              { id: 2, nombre: "Social" },
+              { id: 3, nombre: "Creativo" },
+            ],
+            error: null,
+          }),
+      };
+    }
+    if (tabla === "mapeo_dimensiones_areas") {
+      llamadasAMapeo++;
+      return {
+        select: () => ({
+          or: () =>
+            Promise.resolve({
+              data: [{ areas_carrera: { nombre: "Economía" } }, { areas_carrera: { nombre: "Derecho" } }],
+              error: null,
+            }),
+        }),
+      };
+    }
+    throw new Error(`Tabla inesperada en el mock: ${tabla}`);
+  };
+
+  const areas = await obtenerAreasCandidatas(["Analitico", "Social"]);
+
+  assert.equal(llamadasAMapeo, 1);
+  assert.deepEqual(areas.sort(), ["Derecho", "Economía"]);
+});
+
+test("perfil disperso de 3 dimensiones consulta las 3 combinaciones y une sin duplicados", async () => {
+  let llamadasAMapeo = 0;
+
+  supabase.from = (tabla) => {
+    if (tabla === "dimensiones") {
+      return {
+        select: () =>
+          Promise.resolve({
+            data: [
+              { id: 1, nombre: "Analitico" },
+              { id: 2, nombre: "Social" },
+              { id: 3, nombre: "Creativo" },
+            ],
+            error: null,
+          }),
+      };
+    }
+    if (tabla === "mapeo_dimensiones_areas") {
+      llamadasAMapeo++;
+      // Cada combinación devuelve "Economía" repetido a propósito, para
+      // confirmar que el resultado final no tiene duplicados.
+      return {
+        select: () => ({
+          or: () =>
+            Promise.resolve({
+              data: [{ areas_carrera: { nombre: "Economía" } }],
+              error: null,
+            }),
+        }),
+      };
+    }
+    throw new Error(`Tabla inesperada en el mock: ${tabla}`);
+  };
+
+  const areas = await obtenerAreasCandidatas(["Analitico", "Social", "Creativo"]);
+
+  assert.equal(llamadasAMapeo, 3); // 3 pares posibles entre 3 dimensiones
+  assert.deepEqual(areas, ["Economía"]); // unión sin duplicados
+});
