@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test de orientación vocacional</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-header__mark">O·V</div>
+  <div class="app-header__title">Orientación vocacional</div>
+  <nav class="chapter-tracker" id="chapter-tracker" aria-label="Progreso del test" hidden></nav>
+</header>
+
+<main id="app" class="app-shell">
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 1 — Introducción y datos de presupuesto             -->
+  <!-- ============================================================ -->
+  <section class="screen" data-screen="intro">
+    <p class="eyebrow">Antes de empezar</p>
+    <h1>Encuentra carreras que sí puedes pagar,<br>no solo las que te gustan.</h1>
+    <p class="lede">
+      Este test tiene tres partes: 42 preguntas cortas sobre cómo te gusta
+      trabajar, 3 preguntas abiertas, y tus datos de presupuesto. Con eso
+      cruzamos tu perfil contra universidades reales en Colombia y filtramos
+      solo las que están dentro de lo que puedes pagar. Toma unos 15 minutos.
+    </p>
+
+    <form id="form-presupuesto" class="form-block" novalidate>
+      <div class="field">
+        <label for="presupuestoMax">Presupuesto máximo por semestre (COP)</label>
+        <input type="number" id="presupuestoMax" name="presupuestoMax" min="0" step="100000" placeholder="Ej. 3000000" required>
+        <p class="field-hint">Lo que tu familia puede pagar por semestre, sin contar crédito todavía.</p>
+      </div>
+
+      <div class="field">
+        <label for="estrato">Estrato socioeconómico</label>
+        <select id="estrato" name="estrato" required>
+          <option value="" disabled selected>Selecciona tu estrato</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+        </select>
+        <p class="field-hint">Algunas universidades públicas cobran distinto según el estrato.</p>
+      </div>
+
+      <div class="field">
+        <label for="sisbenGrupo">Grupo Sisbén (opcional)</label>
+        <select id="sisbenGrupo" name="sisbenGrupo">
+          <option value="">No aplica / no sé</option>
+          <option value="A">Grupo A</option>
+          <option value="B">Grupo B</option>
+          <option value="C">Grupo C</option>
+          <option value="D">Grupo D</option>
+        </select>
+        <p class="field-hint">Necesario para saber si calificas a Matrícula Cero.</p>
+      </div>
+
+      <div class="field">
+        <label for="ciudadPreferida">Ciudad donde quieres estudiar</label>
+        <input type="text" id="ciudadPreferida" name="ciudadPreferida" placeholder="Ej. Bogotá" value="Bogotá" required>
+      </div>
+
+      <div class="field">
+        <label for="email">Correo para recibir tu resultado (opcional)</label>
+        <input type="email" id="email" name="email" placeholder="tucorreo@ejemplo.com">
+      </div>
+
+      <button type="submit" class="btn-primary">Comenzar el test</button>
+    </form>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 2 — Preguntas Likert, organizadas en capítulos       -->
+  <!-- ============================================================ -->
+  <section class="screen" data-screen="likert" hidden>
+    <p class="eyebrow" id="likert-chapter-label">Capítulo 1 de 6</p>
+    <h2 id="likert-dimension-name">—</h2>
+    <p class="lede">Marca qué tan de acuerdo estás con cada frase. No hay respuestas correctas.</p>
+
+    <div id="likert-questions" class="likert-list"></div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-secondary" id="btn-likert-back">Atrás</button>
+      <button type="button" class="btn-primary" id="btn-likert-next">Siguiente</button>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 3 — Preguntas abiertas                                -->
+  <!-- ============================================================ -->
+  <section class="screen" data-screen="abiertas" hidden>
+    <p class="eyebrow">Última parte</p>
+    <h2>Tres preguntas con tus propias palabras</h2>
+    <p class="lede">No hay límite de extensión. Entre más concreto, mejor calidad de resultado.</p>
+
+    <div id="abiertas-questions" class="abiertas-list"></div>
+
+    <div class="nav-row">
+      <button type="button" class="btn-secondary" id="btn-abiertas-back">Atrás</button>
+      <button type="button" class="btn-primary" id="btn-abiertas-submit">Ver mi resultado</button>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 4 — Cargando                                          -->
+  <!-- ============================================================ -->
+  <section class="screen screen--center" data-screen="cargando" hidden>
+    <div class="loader" aria-hidden="true"></div>
+    <p class="loader-text">Cruzando tu perfil con universidades dentro de tu presupuesto…</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 5 — Resultado                                         -->
+  <!-- ============================================================ -->
+  <section class="screen" data-screen="resultado" hidden>
+    <p class="eyebrow">Tu resultado</p>
+    <h2>Esto es lo que encontramos</h2>
+    <div id="resultado-contenido"></div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA DE ERROR                                              -->
+  <!-- ============================================================ -->
+  <section class="screen" data-screen="error" hidden>
+    <p class="eyebrow">Algo falló</p>
+    <h2>No pudimos calcular tu resultado</h2>
+    <p class="lede" id="error-mensaje">Error desconocido.</p>
+    <button type="button" class="btn-secondary" id="btn-error-reintentar">Volver al inicio</button>
+  </section>
+
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
