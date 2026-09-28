@@ -200,19 +200,21 @@ export async function filtrarUniversidadesPorPresupuesto({ presupuestoMax, estra
 // ---------------------------------------------------------------------------
 
 export async function crearSesion({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }) {
-  const { data, error } = await supabase
+  // El id se genera en el cliente porque RLS no permite a anon leer
+  // sesiones_test: un insert(...).select() fallaría al intentar devolver la fila.
+  const id = crypto.randomUUID();
+  const { error } = await supabase
     .from("sesiones_test")
     .insert({
+      id,
       presupuesto_semestre_max: presupuestoMax,
       estrato: estrato ?? null,
       sisben_grupo: sisbenGrupo ?? null,
       ciudad_preferida: ciudadPreferida ?? "Bogotá",
-    })
-    .select("id")
-    .single();
+    });
 
   if (error) throw new Error(`Error creando sesión: ${error.message}`);
-  return data.id;
+  return id;
 }
 
 export async function guardarRespuestasLikert(sesionId, respuestas) {
