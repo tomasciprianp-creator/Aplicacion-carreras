@@ -14,8 +14,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // oculta), así que es seguro que viva en el cliente.
 // ---------------------------------------------------------------------------
 
-const SUPABASE_URL = "https://TU-PROYECTO.supabase.co";
-const SUPABASE_ANON_KEY = "TU-ANON-KEY";
+const SUPABASE_URL = "https://xelpoanesbsvlaqrqahc.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhlbHBvYW5lc2JzdmxhcXJxYWhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2MjYxMjMsImV4cCI6MjEwNjIwMjEyM30.pplKUUlhRcF4vjQHCgEWFsImIqP79eMDMzekpImZiCs";
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/interpretar-resultado`;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

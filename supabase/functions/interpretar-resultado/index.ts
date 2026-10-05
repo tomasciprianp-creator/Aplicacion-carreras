@@ -516,22 +516,33 @@ async function reenviarEmail(supabase: SupabaseClient, input: InputReenviarEmail
 // Handler HTTP
 // ---------------------------------------------------------------------------
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function responder(cuerpo: unknown, status: number): Response {
+  return new Response(JSON.stringify(cuerpo), {
+    status,
+    headers: { ...CORS_HEADERS, "content-type": "application/json" },
+  });
+}
+
 Deno.serve(async (req: Request) => {
+  // Preflight CORS: el navegador lo envía antes del POST porque llevamos Authorization.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { status: 200, headers: CORS_HEADERS });
+  }
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Método no permitido" }), {
-      status: 405,
-      headers: { "content-type": "application/json" },
-    });
+    return responder({ error: "Método no permitido" }, 405);
   }
 
   let body: InputGenerar | InputReenviarEmail;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "JSON de entrada inválido" }), {
-      status: 400,
-      headers: { "content-type": "application/json" },
-    });
+    return responder({ error: "JSON de entrada inválido" }, 400);
   }
 
   const supabase = obtenerClienteSupabase();
@@ -543,32 +554,24 @@ Deno.serve(async (req: Request) => {
       ];
       for (const campo of camposRequeridos) {
         if (!(campo in body)) {
-          return new Response(JSON.stringify({ error: `Falta campo: ${campo}` }), {
-            status: 400, headers: { "content-type": "application/json" },
-          });
+          return responder({ error: `Falta campo: ${campo}` }, 400);
         }
       }
       const resultado = await generarYGuardarResultado(supabase, body);
-      return new Response(JSON.stringify(resultado), { status: 200, headers: { "content-type": "application/json" } });
+      return responder(resultado, 200);
     }
 
     if (body.accion === "reenviar_email") {
       if (!body.sesion_id || !body.email) {
-        return new Response(JSON.stringify({ error: "Faltan sesion_id o email" }), {
-          status: 400, headers: { "content-type": "application/json" },
-        });
+        return responder({ error: "Faltan sesion_id o email" }, 400);
       }
       await reenviarEmail(supabase, body);
-      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      return responder({ ok: true }, 200);
     }
 
-    return new Response(JSON.stringify({ error: "Acción no reconocida" }), {
-      status: 400, headers: { "content-type": "application/json" },
-    });
+    return responder({ error: "Acción no reconocida" }, 400);
   } catch (err) {
     console.error("Error no manejado:", err);
-    return new Response(JSON.stringify({ error: "Error interno" }), {
-      status: 500, headers: { "content-type": "application/json" },
-    });
+    return responder({ error: "Error interno" }, 500);
   }
 });
