@@ -294,7 +294,7 @@ document.getElementById("btn-abiertas-submit").addEventListener("click", async (
       respuesta,
     }));
 
-    const { resultado } = await completarTest({
+    const datos = await completarTest({
       presupuestoMax: estado.presupuesto.presupuestoMax,
       estrato: estado.presupuesto.estrato,
       sisbenGrupo: estado.presupuesto.sisbenGrupo,
@@ -305,7 +305,7 @@ document.getElementById("btn-abiertas-submit").addEventListener("click", async (
       email: estado.presupuesto.email,
     });
 
-    renderResultado(resultado);
+    renderResultado(datos);
     mostrarPantalla("resultado");
   } catch (error) {
     mostrarError(error);
@@ -315,50 +315,104 @@ document.getElementById("btn-abiertas-submit").addEventListener("click", async (
 // ---------------------------------------------------------------------
 // Pantalla 5 — Resultado
 //
-// El formato exacto del objeto `resultado` lo define la Edge Function
-// (interpretar-resultado/index.ts). Este render asume una forma razonable
-// {perfil, areas_candidatas, universidades[], interpretacion} y se ajusta
-// cuando se confirme el contrato final de la Edge Function.
+// `datos` viene de completarTest (test-engine.js):
+//   resultado        → lo que devuelve la Edge Function: resumen_perfil,
+//                      explicacion_areas, nota_respuestas_no_conectadas,
+//                      disclaimer y fuente ("ia" o "fallback").
+//   carrerasPorArea  → [{ area, carreras: [nombres] }]
+//   universidades    → { dentro, encima, publicas }
 // ---------------------------------------------------------------------
 
-function renderResultado(resultado) {
+const formatoPesos = (valor) => "$" + Number(valor).toLocaleString("es-CO");
+
+function renderResultado({ resultado, carrerasPorArea, universidades }) {
   const contenedor = document.getElementById("resultado-contenido");
   contenedor.innerHTML = "";
 
-  if (resultado.interpretacion) {
-    contenedor.appendChild(
-      bloqueResultado("Interpretación", `<p>${escapeHtml(resultado.interpretacion)}</p>`),
-    );
+  // 1. Lo que muestra el perfil.
+  if (resultado.resumen_perfil) {
+    contenedor.appendChild(bloqueResultado("Tu perfil", `<p>${escapeHtml(resultado.resumen_perfil)}</p>`));
   }
 
-  if (resultado.areas_candidatas?.length) {
-    const chips = resultado.areas_candidatas
-      .map((area) => `<span class="chip">${escapeHtml(area)}</span>`)
+  // 2. Áreas, con sus carreras debajo, y la explicación.
+  if (carrerasPorArea.length) {
+    const areasHtml = carrerasPorArea
+      .map(({ area, carreras }) => `
+        <div class="area-carreras">
+          <span class="chip">${escapeHtml(area)}</span>
+          ${carreras.length ? `<p class="area-carreras__lista">${carreras.map(escapeHtml).join(" · ")}</p>` : ""}
+        </div>`)
       .join("");
-    contenedor.appendChild(bloqueResultado("Áreas afines a tu perfil", `<div class="chip-row">${chips}</div>`));
+    const explicacion = resultado.explicacion_areas ? `<p>${escapeHtml(resultado.explicacion_areas)}</p>` : "";
+    const nota = resultado.nota_respuestas_no_conectadas
+      ? `<p class="nota">${escapeHtml(resultado.nota_respuestas_no_conectadas)}</p>`
+      : "";
+    contenedor.appendChild(bloqueResultado("Áreas y carreras afines a tu perfil", areasHtml + explicacion + nota));
   }
 
-  if (resultado.universidades?.length) {
-    const cards = resultado.universidades
-      .map(
-        (u) => `
-        <div class="universidad-card">
-          <p class="universidad-card__nombre">${escapeHtml(u.nombre)}</p>
-          <p class="universidad-card__meta">${escapeHtml(u.ciudad || "")}${u.costo ? " · $" + Number(u.costo).toLocaleString("es-CO") + "/semestre" : ""}</p>
-        </div>`,
-      )
-      .join("");
+  // 3. Universidades en tres grupos.
+  const { dentro, encima, publicas } = universidades;
+
+  if (!dentro.length && !encima.length && !publicas.length) {
     contenedor.appendChild(
-      bloqueResultado(`Universidades dentro de tu presupuesto (${resultado.universidades.length})`, cards),
+      bloqueResultado(
+        "Universidades",
+        "<p>Por ahora la plataforma solo tiene universidades de Bogotá. Si escribiste otra ciudad, vuelve a empezar con Bogotá.</p>",
+      ),
     );
   } else {
     contenedor.appendChild(
       bloqueResultado(
-        "Universidades dentro de tu presupuesto",
-        "<p>No encontramos universidades que califiquen con los datos que diste. Prueba ajustando ciudad o presupuesto.</p>",
+        `Dentro de tu presupuesto (${dentro.length})`,
+        dentro.length
+          ? dentro.map((u) => tarjetaUniversidad(u, `${formatoPesos(u.costo)} por semestre`)).join("")
+          : "<p>Ninguna universidad privada de la lista cabe en tu presupuesto. Revisa los grupos de abajo.</p>",
       ),
     );
   }
+
+  if (encima.length) {
+    contenedor.appendChild(
+      bloqueResultado(
+        `Un poco por encima de tu presupuesto (${encima.length})`,
+        encima
+          .map((u) => tarjetaUniversidad(u, `${formatoPesos(u.costo)} por semestre · ${u.porcentajeEncima}% más de lo que pusiste`))
+          .join("") +
+          `<p class="nota">Pueden ser alcanzables con un crédito educativo (por ejemplo, ICETEX) o con la financiación directa de cada universidad. Pregunta en cada una antes de descartarla.</p>`,
+      ),
+    );
+  }
+
+  if (publicas.length) {
+    const califica = publicas.some((u) => u.califica);
+    const detalle = califica ? "Gratuita para ti con Matrícula Cero" : "Matrícula según los ingresos de tu familia";
+    const notaPublicas = califica
+      ? `<p class="nota">Con tu estrato o grupo de Sisbén entras a Matrícula Cero: no pagas matrícula. Lo difícil es el cupo, porque el examen de admisión es exigente.</p>`
+      : `<p class="nota">La Matrícula Cero cubre estratos 1 a 3 y Sisbén A a C. Con los datos que diste no aplica, pero la matrícula en una pública suele ser mucho más baja que en una privada. Consulta el valor en cada universidad.</p>`;
+    contenedor.appendChild(
+      bloqueResultado(
+        `Universidades públicas (${publicas.length})`,
+        publicas.map((u) => tarjetaUniversidad(u, detalle)).join("") + notaPublicas,
+      ),
+    );
+  }
+
+  // 4. Aviso final.
+  if (resultado.disclaimer) {
+    const aviso = document.createElement("p");
+    aviso.className = "disclaimer";
+    aviso.textContent = resultado.disclaimer;
+    contenedor.appendChild(aviso);
+  }
+}
+
+function tarjetaUniversidad(u, detalle) {
+  const porConfirmar = u.verificada ? "" : " · cifra por confirmar en la página de la universidad";
+  return `
+    <div class="universidad-card">
+      <p class="universidad-card__nombre">${escapeHtml(u.nombre)}</p>
+      <p class="universidad-card__meta">${escapeHtml(u.ciudad || "")} · ${escapeHtml(detalle)}${porConfirmar}</p>
+    </div>`;
 }
 
 function bloqueResultado(titulo, htmlInterno) {

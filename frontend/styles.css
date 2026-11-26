@@ -407,6 +407,31 @@ h2 {
   margin: 0;
 }
 
+.area-carreras {
+  margin-bottom: 14px;
+}
+
+.area-carreras__lista {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+  margin: 6px 0 0;
+}
+
+.nota {
+  font-size: 14px;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  border-left: 3px solid var(--color-accent);
+  padding: 10px 14px;
+  margin: 16px 0 0;
+}
+
+.disclaimer {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+
 /* ---------------------------------------------------------------------
    Error
 --------------------------------------------------------------------- */

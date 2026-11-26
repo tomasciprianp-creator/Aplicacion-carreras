@@ -154,45 +154,102 @@ export async function obtenerAreasCandidatas(perfilDimensiones) {
 }
 
 // ---------------------------------------------------------------------------
-// Filtro de universidades por presupuesto — determinístico, corre antes que
-// cualquier interpretación de IA.
+// Carreras de cada área candidata — sale de la tabla `carreras` (0003).
+// Devuelve [{ area, carreras: [nombres] }] en el mismo orden de las áreas.
 // ---------------------------------------------------------------------------
 
-export async function filtrarUniversidadesPorPresupuesto({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }) {
+export async function obtenerCarrerasPorArea(areasCandidatas) {
+  if (areasCandidatas.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("carreras")
+    .select("nombre, areas_carrera!inner(nombre)")
+    .in("areas_carrera.nombre", areasCandidatas)
+    .order("nombre");
+  if (error) throw new Error(`Error cargando carreras: ${error.message}`);
+
+  return areasCandidatas.map((area) => ({
+    area,
+    carreras: (data ?? []).filter((c) => c.areas_carrera.nombre === area).map((c) => c.nombre),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Universidades en tres grupos — determinístico, corre antes que cualquier
+// interpretación de IA.
+//
+//   dentro:  cuestan lo mismo o menos que el presupuesto.
+//   encima:  cuestan hasta 20% más que el presupuesto (se muestran con una
+//            nota de crédito, pero NO se le pasan a la IA).
+//   publicas: siempre se muestran. `califica` dice si el estudiante entra
+//            a Matrícula Cero (estrato 1-3 o Sisbén A-C).
+//
+// A la IA solo le llegan `idsParaIA`: las de "dentro" y las públicas a las
+// que sí califica. Así la IA nunca presenta como alcanzable algo que no lo es.
+// ---------------------------------------------------------------------------
+
+const MARGEN_POR_ENCIMA = 0.2; // 20%
+const GRUPOS_SISBEN_ELEGIBLES = ["A", "B", "C"];
+
+// "Bogotá", "bogota" y " BOGOTA " cuentan como la misma ciudad.
+function normalizarTexto(texto) {
+  return (texto ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+export async function clasificarUniversidades({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }) {
   const { data: universidades, error } = await supabase
     .from("universidades")
-    .select("id, nombre, ciudad, tipo_costo, costo_fijo, ayuda_financiera, fuente, costos_por_estrato(estrato, costo)");
+    .select("id, nombre, ciudad, tipo_costo, costo_fijo, fuente_confiable, costos_por_estrato(estrato, costo)")
+    .order("nombre");
 
   if (error) throw new Error(`Error cargando universidades: ${error.message}`);
 
-  const gruposSisbenElegibles = ["A", "B", "C"];
+  const calificaMatriculaCero =
+    (estrato != null && estrato <= 3) ||
+    (sisbenGrupo != null && GRUPOS_SISBEN_ELEGIBLES.includes(sisbenGrupo));
+  const limiteEncima = presupuestoMax * (1 + MARGEN_POR_ENCIMA);
 
-  return (universidades ?? [])
-    .filter((u) => !ciudadPreferida || u.ciudad === ciudadPreferida)
-    .filter((u) => {
-      if (u.tipo_costo === "matricula_cero") {
-        // Matrícula Cero aplica a estrato 1-3 o Sisbén A/B/C.
-        const califica =
-          (estrato != null && estrato <= 3) ||
-          (sisbenGrupo != null && gruposSisbenElegibles.includes(sisbenGrupo));
-        return califica;
-      }
+  const grupos = { dentro: [], encima: [], publicas: [] };
 
-      if (u.tipo_costo === "fijo") {
-        return u.costo_fijo <= presupuestoMax;
-      }
+  for (const u of universidades ?? []) {
+    if (ciudadPreferida && normalizarTexto(u.ciudad) !== normalizarTexto(ciudadPreferida)) continue;
 
-      // variable_estrato: si no se conoce el estrato del estudiante, no se
-      // puede afirmar que está dentro de presupuesto — se excluye por
-      // seguridad en vez de asumir el valor más bajo.
-      if (estrato == null) return false;
+    const base = { id: u.id, nombre: u.nombre, ciudad: u.ciudad, verificada: u.fuente_confiable !== false };
+
+    if (u.tipo_costo === "matricula_cero") {
+      grupos.publicas.push({ ...base, costo: null, califica: calificaMatriculaCero });
+      continue;
+    }
+
+    // Costo que le aplica a este estudiante.
+    let costo = null;
+    if (u.tipo_costo === "fijo") {
+      costo = Number(u.costo_fijo);
+    } else if (estrato != null) {
+      // variable_estrato: sin estrato no se puede saber el costo real, así
+      // que se excluye en vez de asumir el valor más bajo.
       const filaEstrato = (u.costos_por_estrato ?? []).find((c) => c.estrato === estrato);
-      if (!filaEstrato) return false;
-      return filaEstrato.costo <= presupuestoMax;
-    })
-    .map((u) => u.id); // el frontend solo necesita los ids: la Edge Function
-                        // vuelve a consultar el detalle completo por seguridad
-                        // (ver interpretar-resultado/index.ts)
+      if (filaEstrato) costo = Number(filaEstrato.costo);
+    }
+    if (costo == null) continue;
+
+    if (costo <= presupuestoMax) {
+      grupos.dentro.push({ ...base, costo });
+    } else if (costo <= limiteEncima) {
+      const porcentaje = Math.round(((costo - presupuestoMax) / presupuestoMax) * 100);
+      grupos.encima.push({ ...base, costo, porcentajeEncima: porcentaje });
+    }
+  }
+
+  grupos.dentro.sort((a, b) => a.costo - b.costo);
+  grupos.encima.sort((a, b) => a.costo - b.costo);
+
+  const idsParaIA = [
+    ...grupos.dentro.map((u) => u.id),
+    ...grupos.publicas.filter((u) => u.califica).map((u) => u.id),
+  ];
+
+  return { ...grupos, idsParaIA };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,16 +334,22 @@ export async function completarTest({
 
   const { perfil_dimensiones, es_perfil_disperso } = calcularPerfilDimensiones(respuestasLikert, preguntasLikert);
   const areasCandidatas = await obtenerAreasCandidatas(perfil_dimensiones);
-  const universidadIds = await filtrarUniversidadesPorPresupuesto({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida });
+  const [carrerasPorArea, universidades] = await Promise.all([
+    obtenerCarrerasPorArea(areasCandidatas),
+    clasificarUniversidades({ presupuestoMax, estrato, sisbenGrupo, ciudadPreferida }),
+  ]);
 
   const resultado = await generarResultado({
     sesionId,
-    universidadIds,
+    universidadIds: universidades.idsParaIA,
     perfilDimensiones: perfil_dimensiones,
     esPerfilDisperso: es_perfil_disperso,
     areasCandidatas,
     email,
   });
 
-  return { sesionId, resultado };
+  // `resultado` es lo que devuelve la Edge Function (texto de la IA o el
+  // resumen por defecto). Lo demás sale del motor determinístico y es lo que
+  // la pantalla usa para las áreas, las carreras y los tres grupos.
+  return { sesionId, resultado, areasCandidatas, carrerasPorArea, universidades };
 }
